@@ -1,0 +1,13 @@
+[package]
+name = "sandcastle-examples"
+version = "0.1.0"
+authors = ["Tom Burdick <thomas.burdick@gmail.com>"]
+
+[dependencies]
+winit = "0.7"
+vulkano = "0.7"
+vulkano-shader-derive = "0.7"
+vulkano-win = "0.7"
+sandcastle-vulkano = { path = "../sandcastle-vulkano" }
+sandcastle = { path = "../sandcastle" }
+

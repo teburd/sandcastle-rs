@@ -4,6 +4,7 @@ extern crate image;
 mod error;
 mod renderer;
 mod render_node;
+mod materials;
 mod nodes;
 
 pub use error::{RenderResult, RenderError};

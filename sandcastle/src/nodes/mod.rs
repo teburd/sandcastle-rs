@@ -1,5 +1,2 @@
-mod image;
-mod mask;
+mod geometry;
 mod transform;
-mod shadow;
-mod gradient;

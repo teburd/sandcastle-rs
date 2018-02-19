@@ -1,11 +1,13 @@
+use std::sync::Arc;
+use std::fmt::{Debug, Formatter, Error as FmtError};
 use sandcastle;
 use vulkano;
 use vulkano::device::{Device, DeviceExtensions, Queue, QueuesIter};
 use vulkano::format::Format;
-use vulkano::image::{ImmutableImage, ImageUsage, ImageLayout};
+use vulkano::image::{ImmutableImage, ImageUsage, ImageLayout, SwapchainImage};
 use vulkano::image::Dimensions;
 use vulkano::instance;
-use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice};
+use vulkano::instance::{Instance, InstanceExtensions, PhysicalDevice, PhysicalDeviceType};
 use vulkano::instance::debug::{DebugCallback, MessageTypes};
 use vulkano::swapchain::Surface;
 use vulkano::swapchain::PresentMode;
@@ -14,68 +16,49 @@ use vulkano::swapchain::Swapchain;
 use vulkano::swapchain::AcquireError;
 use vulkano::swapchain::SwapchainCreationError;
 
-
-/// `RendererBuilder` builds a Renderer from any number of predefined information given
-/// with a bare minimum provided by the constructor
-pub struct RendererBuilder<'a> {
-    instance: Instance,
-    surface: Surface,
-    physical: Option<PhysicalDevice<'a>>,
-    swapchain: Option<Swapchain>,
+/// A vulkano implementation of a Sandcastle renderer
+pub struct Renderer {
+    instance: Arc<Instance>,
+    surface: Arc<Surface>,
+    description: (String, PhysicalDeviceType),
+    device: Arc<Device>,
+    dimensions: [u32; 2],
+    swapchain: Arc<Swapchain>,
+    images: Vec<Arc<SwapchainImage>>,
+    draw_queue: Arc<Queue>,
+    //TODO transfer_queue: ...
 }
 
-impl<'a> RendererBuilder<'a> {
-    /// Create a RendererBuilder with the absolute requirements of a vulkan instance and surface
-    fn new(instance: Instance, surface: Surface) -> RendererBuilder<'a> {
-        Renderer {
-            instance: instance,
-            surface: surface,
-            physical: None,
-            swapchain: None,
-        }
+impl Debug for Renderer {
+    fn fmt(&self, fmt: &mut Formatter) -> Result<(), FmtError> {
+        let debug = format!("Renderer using device: {} (type: {:?}), dimensions: ({}, {})", self.description.0, self.description.1, self.dimensions[0], self.dimensions[1]);
+        fmt.write_str(&debug)
     }
+}
 
-    pub fn set_physical(&mut self, physical: PhysicalDevice) {
-       self.physical = Some(physical);
-    }
-
-    pub fn set_swapchain(&mut self, swapchain: Swapchain) {
-        self.swapchain = Some(swapchain);
-    }
-
-    pub fn build(self) -> Renderer<'a> {
+impl Renderer {
+    pub fn new(instance: Arc<Instance>, surface: Arc<Surface>) -> Renderer {
         // if physical does not exist, pick one
-        let physical = if let Some(physical) = self.physical {
-            physical
-        } else {
-            self.create_physical(&self.instance)
-        };
+        let physical = PhysicalDevice::enumerate(&instance)
+            .next().expect("Vulkano no device available");
 
-        let (device, queues) = self.create_device(&physical, &self.surface);
+        let (device, mut queues) = Renderer::create_device(&physical, &surface);
         let draw_queue = queues.next().expect("Expected a draw queue");
-
-        let swapchain =  if let Some(swapchain) = self.swapchain {
-            swapchain
-        }  else {
-            self.create_swapchain(&physical, &device, &self.surface)
-        };
+        let (swapchain, images, dimensions) = Renderer::create_swapchain(&physical, &device, &surface, &draw_queue);
 
         Renderer {
-            instance: self.instance,
-            surface: self.surface,
-            physical: physical,
-            swapchain: swapchain,
+            instance: instance.clone(),
+            surface: surface,
+            description: (physical.name().clone(), physical.ty().clone()),
             device: device,
-            draw_queue: queues.next().expect("Draw Queue"),
+            draw_queue: draw_queue,
+            swapchain: swapchain,
+            images: images,
+            dimensions: dimensions,
         }
     }
 
-    fn create_physical(&self, instance: &Instance) -> PhysicalDevice {
-        PhysicalDevice::enumerate(&instance)
-            .next().expect("Vulkano no device available");
-    }
-
-    fn create_device(&self, physical: &PhysicalDevice, surface: &Surface) -> (Device, QueuesIter) {
+    fn create_device(physical: &PhysicalDevice, surface: &Arc<Surface>) -> (Arc<Device>, QueuesIter) {
         let queue = physical.queue_families().find(|&q| {
             // We take the first queue that supports drawing to our window.
             q.supports_graphics() && surface.is_supported(q).unwrap_or(false)
@@ -85,44 +68,25 @@ impl<'a> RendererBuilder<'a> {
             .. vulkano::device::DeviceExtensions::none()
 
         };
-        Device::new(physical, physical.supported_features(), &device_ext, [(queue, 0.5)].iter().cloned()).expect("Vulkano Device Creation")
+        Device::new(*physical, physical.supported_features(), &device_ext, [(queue, 0.5)].iter().cloned()).expect("Vulkano Device Creation")
     }
 
-    fn create_swapchain(&self, physical: &PhysicalDevice, device: &Device, surface: &Surface, draw_queue: &Queue) -> Swapchain {
-        let caps = surface.capabilities(physical)
+    fn create_swapchain(physical: &PhysicalDevice, device: &Arc<Device>, surface: &Arc<Surface>, draw_queue: &Arc<Queue>) -> (Arc<Swapchain>, Vec<Arc<SwapchainImage>>, [u32; 2]) {
+        let caps = surface.capabilities(*physical)
                          .expect("failed to get surface capabilities");
         let dimensions = caps.current_extent.unwrap_or([1024, 768]);
         let alpha = caps.supported_composite_alpha.iter().next().unwrap();
         let format = caps.supported_formats[0].0;
-        Swapchain::new(device.clone(), surface.clone(), caps.min_image_count, format,
+        let (swapchain, images) = Swapchain::new(device.clone(), surface.clone(), caps.min_image_count, format,
                        dimensions, 1, caps.supported_usage_flags, draw_queue,
                        SurfaceTransform::Identity, alpha, PresentMode::Fifo, true,
-                       None).expect("failed to create swapchain")
-    }
-}
-
-/// A vulkano implementation of a Sandcastle renderer
-pub struct Renderer<'a> {
-    instance: Instance,
-    physical: PhysicalDevice<'a>,
-    device: Device,
-    surface: Surface,
-    //TODO dimensions: ...
-    swapchain: Swapchain,
-    draw_queue: Queue,
-    //TODO transfer_queue: ...
-    //TODO compute_queue: ...
-}
-
-impl<'a> Renderer<'a> {
-    pub fn builder(instance: Instance, surface: Surface) -> RendererBuilder<'a> {
-        RendererBuilder::new(instance, surface)
+                                                 None).expect("failed to create swapchain");
+        (swapchain, images, dimensions)
     }
 }
 
 
-
-impl<'a> sandcastle::Renderer for Renderer<'a> {
+impl<'a> sandcastle::Renderer for Renderer {
     fn render(&mut self, node: Box<sandcastle::RenderNode>) -> sandcastle::RenderResult<()> {
        Ok(())
     }

@@ -10,5 +10,5 @@ authors = ["Tom Burdick <thomas.burdick@gmail.com>"]
 keywords = ["ui", "scenegraph", "widgets", "vulkan"]
 
 [dependencies]
-euclid = "0.17"
-image = "0.18"
+euclid = "0.18"
+image = "0.19"

@@ -4,6 +4,6 @@ version = "0.0.1"
 authors = ["Tom Burdick <thomas.burdick@gmail.com>"]
 
 [dependencies]
-vulkano = "0.7"
-vulkano-shaders = "0.7"
+vulkano = "0.9"
+vulkano-shaders = "0.9"
 sandcastle = { path = "../sandcastle" }
